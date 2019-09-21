@@ -1,0 +1,136 @@
+import pandas as pd
+import numpy as np
+
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+import statsmodels.api as sm
+import scipy.stats as ss
+from statsmodels.tsa.stattools import adfuller
+from statsmodels.tsa.arima_model import ARMA
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+
+from datetime import datetime
+
+filepath = '/mnt/workspace/time_series/monthly_in_situ_co2_mlo.csv'
+#filepath = 'Data/monthly_in_situ_co2_mlo.csv'
+df = pd.read_csv(filepath, 
+                 na_values=-99.99, 
+                 skiprows=55, 
+                 skipfooter=6,
+                 engine='python')
+df.drop([0, 1], axis=0, inplace=True)
+df.reset_index(inplace=True)
+df.drop(['Date Excel', 'index'], axis=1, inplace=True)
+df = df[10:-6] #Skipt first and last year, because of many NaN values
+df["Dato"] = df["Yr"].map(str) + "-" +df["Mn"].map(str) # Create new date-column with fromat YYYY-MM
+df.Dato = pd.to_datetime(df['Dato'], format='%Y-%m') # change date to pandas-datetime format
+df.set_index(['Dato'],inplace=True) #Set date as index
+df = df.rename({"CO2[ppm]": 'CO2'}, axis=1)  # create new name for CO2-concentration column
+df = df[["CO2"]] # We only need this column
+df.fillna(method='ffill', inplace=True) # Forward filling the NaN values
+
+### FUNCTIONS
+def plot_df(df, x, y, title="", xlabel='Dato', ylabel='CO2[ppm]', size=(16,8)):
+    """ Plots the given dataframe"""
+    
+    plt.figure(figsize=size)
+    plt.plot(x, y,linestyle="-")
+    plt.gca().set(title=title, xlabel=xlabel, ylabel=ylabel)
+    plt.savefig(title)
+    
+def moving_average(df, period):
+    """Filters df with a moving average window of size period"""
+    
+    n = len(df.index) #antall data-punkter
+    q = int(period/2)
+    x = np.pad(df.CO2.values, q, 'edge')
+    trend = np.zeros(n)
+    for i in range(n):
+        for j in range(-q,q+1):
+            if (j == -q or j == q):
+                k = 0.5
+            else:
+                k = 1
+            trend[i] += k*x[q+i-j]
+        trend[i] = trend[i]/(2.0*q)
+    return trend
+
+def gen_autocorr(series):
+    """Generates ACF of input time series"""
+    length_sequence = series.size
+    lag = np.array(range(-length_sequence + 1, length_sequence))
+    autocorr = np.correlate(series.values, series.values, mode='full')
+    autocorr = autocorr / (autocorr[length_sequence - 1]) # Normalize with regard to lag = 0
+    return pd.Series(lag), pd.Series(autocorr)
+
+## PLOTTING years on top of each other to compare seasonal component
+np.random.seed(42)
+mycolors = np.random.choice(list(mpl.colors.XKCD_COLORS.keys()), len(years), replace=False)
+year_list = [1959, 1964, 1970, 1971, 1973, 1974, 1980, 1983, 1987, 1991, 1996, 1997, 2003, 2008, 2015, 2018]
+plt.figure(figsize=(12,5), dpi=80)
+for i, y in enumerate(years):
+    if y in year_list:
+        plt.plot('month', 'CO2', data=df.loc[df.year==y, :], color=mycolors[i], label=y)
+        plt.xlabel('Month', fontsize=12)
+        plt.ylabel('CO2', fontsize=12)
+        plt.text(df.loc[df.year==y, :].shape[0]-.9, df.loc[df.year==y, 'CO2'][-1:].values[0], y, fontsize=10, color=mycolors[i])
+        plt.tight_layout()
+
+## ESTIMATING AND REMOVING TREND COMPONENT
+trend = moving_average(df, 12)
+data_detrend = df.CO2.values - trend
+df2 = df.copy(deep=True)
+df2.CO2 = data_detrend
+plot_df(df2, x=df2.index, y=df2.CO2, title='CO2-concentration at Mauna Lua 1959-2018 - without trend') 
+
+## ESTIMATING AND REMOVING SEASONAL COMPONENT
+data_years = data_detrend.reshape((60, 12)) #Reshape data so that each row contains data for a year
+yearly_mean = np.mean(data_years, axis=0) #Get mean of each year
+yearly_mean -= np.mean(yearly_mean) #Sum of means should be zero
+seasonal_component = np.tile(yearly_mean,60) #length of data should be equal
+data_transform1 = df.CO2.values - seasonal_component
+df2.CO2 = data_transform1
+trend = moving_average(df2, 12)
+
+## STORE RESULTS IN OTHER DATAFRAME
+residuals = df.CO2.values - trend - seasonal_component
+df['trend'] = trend
+df['seasonal_component'] = seasonal_component
+df['residuals'] = residuals
+
+#plot_df(df, x=df.index, y=df.residuals, title='CO2-concentration at Mauna Lua 1959-2018 - residuals')
+
+## FURTHER DIFFERENCING TO REMOVE SEASONAL COMPONENTS
+one_shifted = df['residuals'].shift(1)
+df['residuals_differenced'] = df['residuals'] - one_shifted
+one_shifted = df['residuals_differenced'].shift(1)
+df['residuals_differenced_2'] = df['residuals_differenced'] - one_shifted
+
+df = df[12:]
+fig, ax = plt.subplots(nrows= 2, ncols=1, figsize=(14,6))
+
+ax[0].plot(df.index, df.residuals)
+ax[0].set_title('Raw residuals', fontsize=14)
+ax[0].set_xlabel('Date', fontsize=12)
+ax[0].set_ylabel('CO2[ppm]', fontsize=12)
+
+ax[1].plot(df.index, df.residuals_differenced_2)
+ax[1].set_title('2-differenced residuals', fontsize=14)
+ax[1].set_xlabel('Date', fontsize=12)
+ax[1].set_ylabel('CO2[ppm]', fontsize=12)
+plt.tight_layout()
+
+# GENERATING AUTOCORRELATION OF RESIDUALS
+plot_acf(df.residuals_differenced_2,lags=60)
+plot_pacf(df.residuals_differenced_2,lags=60)
+
+# FITTING ARMA MODEL
+model = ARMA(df.residuals_differenced_2, order=(12,2)) #order=(p,q)
+result = model.fit()
+print(result.aic) Akaike Information Criterion value
+
+AR_coeff = result.arparams
+MA_coeff = result.maparams
+ARMA_resid = result.resid
