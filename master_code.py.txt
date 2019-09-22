@@ -92,17 +92,15 @@ yearly_mean -= np.mean(yearly_mean) #Sum of means should be zero
 seasonal_component = np.tile(yearly_mean,60) #length of data should be equal
 data_transform1 = df.CO2.values - seasonal_component
 df2.CO2 = data_transform1
-trend = moving_average(df2, 12)
 
 ## STORE RESULTS IN OTHER DATAFRAME
-residuals = df.CO2.values - trend - seasonal_component
-df['trend'] = trend
+residuals = df.CO2.values - seasonal_component
 df['seasonal_component'] = seasonal_component
 df['residuals'] = residuals
 
 #plot_df(df, x=df.index, y=df.residuals, title='CO2-concentration at Mauna Lua 1959-2018 - residuals')
 
-## FURTHER DIFFERENCING TO REMOVE SEASONAL COMPONENTS
+## DIFFERENCING TO REMOVE TREND
 one_shifted = df['residuals'].shift(1)
 df['residuals_differenced'] = df['residuals'] - one_shifted
 one_shifted = df['residuals_differenced'].shift(1)
