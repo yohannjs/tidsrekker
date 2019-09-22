@@ -134,3 +134,53 @@ print(result.aic) Akaike Information Criterion value
 AR_coeff = result.arparams
 MA_coeff = result.maparams
 ARMA_resid = result.resid
+
+#Create plot of predicted and observed values
+length_sequence = len(df.residuals_differenced_2)
+result.plot_predict(start=length_sequence-200, end=length_sequence-100)
+
+#Create Q-Q plot of residuals
+sm.qqplot(result.resid.v
+
+#BOOTSTRAP CONFIDENCE INTERVALS
+
+from statsmodels.tsa.arima_model import ARMA
+from arch.bootstrap import StationaryBootstrap
+import seaborn as sns
+
+p = 12 #AR-order
+q = 2 #MA-order
+
+ar_estimates = []
+ma_estimates = []
+
+boots = StationaryBootstrap(12, df.residuals_differneced_2)
+
+i = 0
+for data in boots:
+    
+    mod = ARMA(data, order=(p,q)) #order=(p,q)
+    result = mod.fit()
+    
+    ar_estimates.append(result.arparams)
+    ma_estimates.append(result.maparams)
+    
+    i += 1
+    
+
+#Calculate mean and confidence-intervals:
+for i in range p:
+    alpha = 0.95
+    per = ((1.0-alpha)/2.0) * 100
+    lower = np.percentile(ar_estimates[i], per) #Lower CI-bound
+    per = (alpha+((1.0-alpha)/2.0)) * 100
+    upper = np.percentile(ar_estimates[i],per) #Upper CI-bound
+
+    np.mean(ar_estimates[i]) #Mean of the estimator
+    
+#Plot the distribution
+plt.figure(figsize=(10,10))
+sns.set(color_codes=True)
+sns.distplot(ar_estimates[1])
+plt.title("Bootstrap samples of $\phi_{2}$")
+plt.show()
